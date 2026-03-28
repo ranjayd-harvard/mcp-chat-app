@@ -34,6 +34,23 @@ services:
       - mcp-network
     restart: unless-stopped
 
+  # External API MCP Server
+  external-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mcp-external-api
+    ports:
+      - "8002:8002"
+    environment:
+      - EXTERNAL_API_PORT=8002
+      - WEATHER_API_KEY=${WEATHER_API_KEY}
+      - STOCK_API_KEY=${STOCK_API_KEY}
+    command: python external_api_mcp.py
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
   # Next.js Frontend
   frontend:
     build:

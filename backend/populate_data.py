@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-DATABASE_NAME = os.getenv("DATABASE_NAME", "business_db")
+DATABASE_NAME = os.getenv("DATABASE_NAME", "product_db")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "products")
 
 

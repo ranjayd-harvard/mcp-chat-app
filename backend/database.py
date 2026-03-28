@@ -10,7 +10,7 @@ load_dotenv()
 
 # MongoDB connection settings
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://localhost:27017")
-DATABASE_NAME = os.getenv("DATABASE_NAME", "business_db")
+DATABASE_NAME = os.getenv("DATABASE_NAME", "product_db")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "products")
 
 # Global database client
@@ -42,3 +42,8 @@ async def close_mongo_connection():
 def get_collection():
     """Get the MongoDB collection"""
     return collection
+
+
+def get_database():
+    """Get the MongoDB database"""
+    return database

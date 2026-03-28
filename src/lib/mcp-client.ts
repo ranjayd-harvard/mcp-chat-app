@@ -1,59 +1,98 @@
 import { MCPTool } from '@/types';
 
 /**
- * MCP Client for connecting to FastAPI + Custom Tools servers
+ * MCP Client for connecting to FastAPI + Custom Tools + External API servers
  */
 export class MCPClient {
   private apiUrl: string;
   private customToolsUrl: string;
+  private externalApiUrl: string;
 
-  constructor(apiUrl: string = 'http://localhost:8000', customToolsUrl: string = 'http://localhost:8001') {
+  constructor(
+    apiUrl: string = 'http://localhost:8000',
+    customToolsUrl: string = 'http://localhost:8001',
+    externalApiUrl: string = 'http://localhost:8002'
+  ) {
     this.apiUrl = apiUrl;
     this.customToolsUrl = customToolsUrl;
+    this.externalApiUrl = externalApiUrl;
   }
 
   /**
    * Get available tools from FastAPI server (via OpenAPI schema)
    */
   async getAPITools(): Promise<MCPTool[]> {
+    const allTools: MCPTool[] = [];
+
+    // Load from main API (port 8000) - no prefix needed
     try {
-      console.log('🔍 Fetching API tools from:', `${this.apiUrl}/openapi.json`);
-      const response = await fetch(`${this.apiUrl}/openapi.json`);
-      
-      if (!response.ok) {
-        console.error('❌ Failed to fetch OpenAPI schema:', response.status);
-        return [];
-      }
-      
-      const schema = await response.json();
-      console.log('✅ OpenAPI schema loaded:', schema.info?.title);
-      console.log('📋 Paths found:', Object.keys(schema.paths || {}).length);
-
-      const tools: MCPTool[] = [];
-
-      // Convert OpenAPI paths to MCP tools
-      for (const [path, methods] of Object.entries(schema.paths || {})) {
-        for (const [method, details] of Object.entries(methods as any)) {
-          if (['get', 'post', 'put', 'patch', 'delete'].includes(method)) {
-            const operationId = (details as any).operationId || `${method}_${path.replace(/\//g, '_')}`;
-            
-            tools.push({
-              name: operationId,
-              description: (details as any).summary || (details as any).description || `${method.toUpperCase()} ${path}`,
-              inputSchema: this.convertOpenAPIToMCPSchema(details as any, path, method),
-            });
-            
-            console.log(`✅ Added tool: ${operationId}`);
-          }
-        }
-      }
-
-      console.log(`📊 Total tools loaded: ${tools.length}`);
-      return tools;
+      console.log('📦 Fetching API tools from:', `${this.apiUrl}/openapi.json`);
+      const tools = await this.loadToolsFromServer(this.apiUrl, 'Main API');
+      allTools.push(...tools);
     } catch (error) {
-      console.error('❌ Error fetching API tools:', error);
+      console.error('❌ Failed to load main API tools:', error);
+    }
+
+    // Load from external API server (port 8002) - add "ext_" prefix
+    try {
+      console.log('🌐 Fetching external API tools from:', `${this.externalApiUrl}/openapi.json`);
+      const tools = await this.loadToolsFromServer(this.externalApiUrl, 'External API', 'ext');
+      allTools.push(...tools);
+    } catch (error) {
+      console.error('❌ Failed to load external API tools:', error);
+    }
+
+    console.log(`📊 Total API tools loaded: ${allTools.length}`);
+    return allTools;
+  }
+
+  /**
+   * Load tools from a specific server
+   */
+  private async loadToolsFromServer(serverUrl: string, serverName: string, prefix?: string): Promise<MCPTool[]> {
+    const response = await fetch(`${serverUrl}/openapi.json`);
+    
+    if (!response.ok) {
+      console.error(`❌ Failed to fetch OpenAPI schema from ${serverName}:`, response.status);
       return [];
     }
+    
+    const schema = await response.json();
+    console.log(`✅ ${serverName} schema loaded:`, schema.info?.title);
+    console.log(`📋 Paths found in ${serverName}:`, Object.keys(schema.paths || {}).length);
+
+    const tools: MCPTool[] = [];
+
+    // Skip generic endpoints like health, root
+    const skipOperations = ['health', 'root'];
+
+    // Convert OpenAPI paths to MCP tools
+    for (const [path, methods] of Object.entries(schema.paths || {})) {
+      for (const [method, details] of Object.entries(methods as any)) {
+        if (['get', 'post', 'put', 'patch', 'delete'].includes(method)) {
+          const originalOperationId = (details as any).operationId || `${method}_${path.replace(/\//g, '_')}`;
+          
+          // Skip health/root endpoints
+          if (skipOperations.includes(originalOperationId)) {
+            console.log(`⏭️  Skipping generic endpoint: ${originalOperationId}`);
+            continue;
+          }
+          
+          // Add prefix to avoid name collisions
+          const operationId = prefix ? `${prefix}_${originalOperationId}` : originalOperationId;
+          
+          tools.push({
+            name: operationId,
+            description: (details as any).summary || (details as any).description || `${method.toUpperCase()} ${path}`,
+            inputSchema: this.convertOpenAPIToMCPSchema(details as any, path, method),
+          });
+          
+          console.log(`✅ Added tool from ${serverName}: ${operationId}`);
+        }
+      }
+    }
+
+    return tools;
   }
 
   /**
@@ -103,19 +142,32 @@ export class MCPClient {
   }
 
   /**
-   * Call a FastAPI endpoint
+   * Call a FastAPI endpoint (works for both main API and external API)
    */
   async callAPITool(toolName: string, input: any): Promise<any> {
     try {
+      // Determine which server to use based on tool name prefix
+      let serverUrl = this.apiUrl; // Default to main API
+      let actualToolName = toolName;
+      
+      // Check if tool name has external API prefix
+      if (toolName.startsWith('ext_')) {
+        serverUrl = this.externalApiUrl;
+        actualToolName = toolName.replace('ext_', ''); // Remove prefix
+        console.log(`🌐 Using external API server for: ${actualToolName}`);
+      } else {
+        console.log(`📦 Using main API server for: ${toolName}`);
+      }
+
       // Parse the operation to determine HTTP method and path
-      const response = await fetch(`${this.apiUrl}/openapi.json`);
+      const response = await fetch(`${serverUrl}/openapi.json`);
       const schema = await response.json();
 
-      // Find the operation
+      // Find the operation using the actual tool name (without prefix)
       for (const [path, methods] of Object.entries(schema.paths || {})) {
         for (const [method, details] of Object.entries(methods as any)) {
-          if ((details as any).operationId === toolName) {
-            return await this.makeAPIRequest(method, path, input);
+          if ((details as any).operationId === actualToolName) {
+            return await this.makeAPIRequest(serverUrl, method, path, input);
           }
         }
       }
@@ -130,7 +182,7 @@ export class MCPClient {
   /**
    * Make HTTP request to FastAPI
    */
-  private async makeAPIRequest(method: string, path: string, input: any): Promise<any> {
+  private async makeAPIRequest(serverUrl: string, method: string, path: string, input: any): Promise<any> {
     // Replace path parameters
     let url = path;
     const pathParams = path.match(/\{([^}]+)\}/g) || [];
@@ -166,7 +218,8 @@ export class MCPClient {
       options.body = JSON.stringify(input);
     }
 
-    const response = await fetch(`${this.apiUrl}${url}`, options);
+    console.log(`🔧 Calling ${method.toUpperCase()} ${serverUrl}${url}`);
+    const response = await fetch(`${serverUrl}${url}`, options);
     
     if (!response.ok) {
       const error = await response.text();

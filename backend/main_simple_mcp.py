@@ -6,11 +6,12 @@ from fastapi import FastAPI, HTTPException, status, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from typing import List
+from typing import Optional
 from bson import ObjectId
 from datetime import datetime
 import os
 
-from database import connect_to_mongo, close_mongo_connection, get_collection
+from database import connect_to_mongo, close_mongo_connection, get_collection, get_database
 from models import Product, ProductResponse, ProductUpdate
 
 
@@ -152,6 +153,143 @@ async def health():
         "database": "connected" if get_collection() else "disconnected"
     }
 
+# ============================================
+# Conversation Endpoints
+# ============================================
+
+@app.post("/conversations", response_model=dict, operation_id="create_conversation")
+async def create_conversation(user_id: Optional[str] = None):
+    """Create a new conversation"""
+    db = get_database()
+    
+    now = datetime.utcnow()
+    
+    conversation = {
+        "user_id": user_id,
+        "messages": [],
+        "created_at": now,
+        "updated_at": now,
+        "title": "New Conversation"
+    }
+    
+    result = await db.conversations.insert_one(conversation)
+    
+    return {
+        "id": str(result.inserted_id),
+        "created_at": now.isoformat() + "Z",  # ← Add Z for UTC
+        "updated_at": now.isoformat() + "Z",  # ← Add Z for UTC
+        "title": conversation["title"]
+    }
+
+
+@app.get("/conversations", response_model=list, operation_id="list_conversations")
+async def list_conversations(
+    user_id: Optional[str] = None,
+    limit: int = 20,
+    skip: int = 0
+):
+    """Get all conversations for a user"""
+    db = get_database()
+    
+    query = {}
+    if user_id:
+        query["user_id"] = user_id
+    
+    conversations = await db.conversations.find(query) \
+        .sort("updated_at", -1) \
+        .skip(skip) \
+        .limit(limit) \
+        .to_list(length=limit)
+    
+    # Convert ObjectId to string and format response
+    for conv in conversations:
+        conv["id"] = str(conv.pop("_id"))
+        conv["message_count"] = len(conv.get("messages", []))
+        
+        # Convert datetime to ISO string with Z
+        if isinstance(conv.get("created_at"), datetime):
+            conv["created_at"] = conv["created_at"].isoformat() + "Z"
+        if isinstance(conv.get("updated_at"), datetime):
+            conv["updated_at"] = conv["updated_at"].isoformat() + "Z"
+        
+        conv.pop("messages", None)
+    
+    return conversations
+
+
+@app.get("/conversations/{conversation_id}", response_model=dict, operation_id="get_conversation")
+async def get_conversation(conversation_id: str):
+    """Get a specific conversation with all messages"""
+    db = get_database()  # ← ADD THIS LINE
+    
+    try:
+        conversation = await db.conversations.find_one({"_id": ObjectId(conversation_id)})
+        
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        conversation["id"] = str(conversation.pop("_id"))
+        return conversation
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/conversations/{conversation_id}/messages", operation_id="add_message_to_conversation")
+async def add_message(
+    conversation_id: str,
+    message: dict
+):
+    """Add a message to a conversation"""
+    db = get_database()  # ← ADD THIS LINE
+    
+    try:
+        # Add timestamp if not provided
+        if "timestamp" not in message:
+            message["timestamp"] = datetime.utcnow()
+        
+        result = await db.conversations.update_one(
+            {"_id": ObjectId(conversation_id)},
+            {
+                "$push": {"messages": message},
+                "$set": {"updated_at": datetime.utcnow()}
+            }
+        )
+        
+        if result.modified_count == 0:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        # Auto-generate title from first user message
+        conversation = await db.conversations.find_one({"_id": ObjectId(conversation_id)})
+        if len(conversation.get("messages", [])) == 1 and message["role"] == "user":
+            # Create title from first 50 chars of first message
+            title = message["content"][:50] + ("..." if len(message["content"]) > 50 else "")
+            await db.conversations.update_one(
+                {"_id": ObjectId(conversation_id)},
+                {"$set": {"title": title}}
+            )
+        
+        return {"success": True, "message": "Message added"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/conversations/{conversation_id}", operation_id="delete_conversation")
+async def delete_conversation(conversation_id: str):
+    """Delete a conversation"""
+    db = get_database()  # ← ADD THIS LINE
+    
+    try:
+        result = await db.conversations.delete_one({"_id": ObjectId(conversation_id)})
+        
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        return {"success": True, "message": "Conversation deleted"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
