@@ -1,0 +1,362 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  MCP Chat App — full stack deployment in a dedicated VPC.
+  Provisions networking, a single EC2 instance, an Elastic IP, and
+  bootstraps the entire Docker Compose stack automatically.
+
+# -------------------------------------------------------------------------
+# Parameters
+# -------------------------------------------------------------------------
+Parameters:
+
+  GitRepoUrl:
+    Type: String
+    Description: >
+      HTTPS URL of your git repository.
+      For private repos include a token:
+      https://TOKEN@github.com/user/mcp-chat-app.git
+
+  AnthropicApiKey:
+    Type: String
+    NoEcho: true
+    Description: Anthropic API key (sk-ant-...)
+
+  MSSQLSAPassword:
+    Type: String
+    NoEcho: true
+    Default: "YourStrong@Password123"
+    Description: >
+      SQL Server SA password. Must be 8+ chars with upper, lower,
+      digit and special character.
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: EC2 key pair for SSH access
+
+  InstanceType:
+    Type: String
+    Default: t3.large
+    AllowedValues:
+      - t3.large    # 8 GB  — minimum (SQL Server needs 2 GB alone)
+      - t3.xlarge   # 16 GB — recommended for stable production
+      - t3.2xlarge  # 32 GB
+      - m5.large
+      - m5.xlarge
+    Description: "Instance type. t3.large (8 GB) is the minimum."
+
+  SSHCidr:
+    Type: String
+    Default: "0.0.0.0/0"
+    Description: >
+      CIDR allowed for SSH. Restrict to your IP for security,
+      e.g. 203.0.113.5/32
+
+# -------------------------------------------------------------------------
+# Resources
+# -------------------------------------------------------------------------
+Resources:
+
+  # -----------------------------------------------------------------------
+  # VPC
+  # -----------------------------------------------------------------------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-vpc"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-igw"
+
+  IGWAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-public-subnet"
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-rt"
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IGWAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+
+  SubnetRTAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref RouteTable
+
+  # -----------------------------------------------------------------------
+  # Security Group
+  # -----------------------------------------------------------------------
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: MCP Chat App ports
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 22,   ToPort: 22,   CidrIp: !Ref SSHCidr,    Description: SSH }
+        - { IpProtocol: tcp, FromPort: 3000, ToPort: 3000, CidrIp: "0.0.0.0/0",     Description: "Frontend (Next.js)" }
+        - { IpProtocol: tcp, FromPort: 8000, ToPort: 8000, CidrIp: "0.0.0.0/0",     Description: "Product API" }
+        - { IpProtocol: tcp, FromPort: 8002, ToPort: 8002, CidrIp: "0.0.0.0/0",     Description: "External API" }
+        - { IpProtocol: tcp, FromPort: 8003, ToPort: 8003, CidrIp: "0.0.0.0/0",     Description: "Kafka MCP" }
+        - { IpProtocol: tcp, FromPort: 8004, ToPort: 8004, CidrIp: "0.0.0.0/0",     Description: "SQL Server bridge" }
+        - { IpProtocol: tcp, FromPort: 8005, ToPort: 8005, CidrIp: "0.0.0.0/0",     Description: "MCP Gateway (Claude)" }
+      SecurityGroupEgress:
+        - { IpProtocol: "-1", CidrIp: "0.0.0.0/0" }
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-sg"
+
+  # -----------------------------------------------------------------------
+  # IAM — lets the instance call cfn-signal and use SSM Session Manager
+  # -----------------------------------------------------------------------
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore  # SSM Session Manager
+      Policies:
+        - PolicyName: CFNSignal
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: cloudformation:SignalResource
+                Resource: !Sub "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref InstanceRole]
+
+  # -----------------------------------------------------------------------
+  # Elastic IP — stable address survives instance stop/start
+  # -----------------------------------------------------------------------
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    DependsOn: IGWAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-eip"
+
+  # -----------------------------------------------------------------------
+  # EC2 Instance
+  # -----------------------------------------------------------------------
+  MCPInstance:
+    Type: AWS::EC2::Instance
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT45M   # 45 min — SQL Server + Kafka images are large
+    Properties:
+      # Latest Ubuntu 22.04 LTS — resolved at deploy time via SSM
+      ImageId: !Sub "{{resolve:ssm:/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id}}"
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyPairName
+      IamInstanceProfile: !Ref InstanceProfile
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: "0"
+          SubnetId: !Ref PublicSubnet
+          GroupSet: [!Ref SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-instance"
+      UserData:
+        Fn::Base64:
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              set -euo pipefail
+              exec > >(tee /var/log/user-data.log | logger -t user-data -s 2>/dev/console) 2>&1
+
+              echo ">>> MCP Chat App bootstrap started at $(date)"
+
+              # ------------------------------------------------------------------
+              # cfn-signal helper — call at end or on error
+              # ------------------------------------------------------------------
+              CFN_SIGNAL="/usr/local/bin/cfn-signal"
+              signal_cf() {
+                $CFN_SIGNAL -e $1 \
+                  --stack ${AWS::StackName} \
+                  --resource MCPInstance \
+                  --region ${AWS::Region} || true
+              }
+              trap 'echo ">>> ERROR on line $LINENO"; signal_cf 1' ERR
+
+              # ------------------------------------------------------------------
+              # System packages
+              # ------------------------------------------------------------------
+              apt-get update -y
+              apt-get install -y git curl unzip python3-pip
+
+              # CloudFormation bootstrap tools (provides cfn-signal)
+              pip3 install \
+                https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-py3-latest.tar.gz \
+                --quiet
+
+              # ------------------------------------------------------------------
+              # Docker
+              # ------------------------------------------------------------------
+              curl -fsSL https://get.docker.com | sh
+              usermod -aG docker ubuntu
+              systemctl enable docker
+              systemctl start docker
+
+              # Docker Compose plugin (v2)
+              apt-get install -y docker-compose-plugin
+              docker compose version
+
+              # ------------------------------------------------------------------
+              # Clone repository
+              # ------------------------------------------------------------------
+              cd /home/ubuntu
+              git clone ${GitRepoUrl} mcp-chat-app
+              cd mcp-chat-app
+
+              # ------------------------------------------------------------------
+              # Write .env — CloudFormation substitutes all ${...} values here
+              # before the script runs, so these become literal strings in .env
+              # ------------------------------------------------------------------
+              cat > .env <<ENVEOF
+              ANTHROPIC_API_KEY=${AnthropicApiKey}
+              MSSQL_SA_PASSWORD=${MSSQLSAPassword}
+              NEXT_PUBLIC_API_URL=http://${EIP}:8000
+              NEXT_PUBLIC_EXTERNAL_URL=http://${EIP}:8002
+              NEXT_PUBLIC_KAFKA_URL=http://${EIP}:8003
+              NEXT_PUBLIC_SQL_URL=http://${EIP}:8004
+              ENVEOF
+
+              # Remove leading whitespace caused by heredoc indentation
+              sed -i 's/^[[:space:]]*//' .env
+              chown ubuntu:ubuntu .env
+
+              # ------------------------------------------------------------------
+              # Build and start all services
+              # ------------------------------------------------------------------
+              echo ">>> Starting docker compose build (this takes 10-20 min)..."
+              docker compose up -d --build
+              echo ">>> docker compose up finished"
+
+              # ------------------------------------------------------------------
+              # Systemd service — restarts the stack on instance reboot
+              # ------------------------------------------------------------------
+              cat > /etc/systemd/system/mcp-chat-app.service <<SVCEOF
+              [Unit]
+              Description=MCP Chat App (Docker Compose)
+              Requires=docker.service
+              After=docker.service network-online.target
+
+              [Service]
+              Type=oneshot
+              RemainAfterExit=yes
+              WorkingDirectory=/home/ubuntu/mcp-chat-app
+              ExecStart=/usr/bin/docker compose up -d
+              ExecStop=/usr/bin/docker compose down
+              TimeoutStartSec=600
+
+              [Install]
+              WantedBy=multi-user.target
+              SVCEOF
+
+              sed -i 's/^[[:space:]]*//' /etc/systemd/system/mcp-chat-app.service
+              systemctl daemon-reload
+              systemctl enable mcp-chat-app
+
+              # ------------------------------------------------------------------
+              # Done
+              # ------------------------------------------------------------------
+              echo ">>> Bootstrap complete at $(date)"
+              echo ">>> Frontend:    http://${EIP}:3000"
+              echo ">>> MCP Gateway: http://${EIP}:8005/sse"
+              signal_cf 0
+            - EIP: !GetAtt ElasticIP.PublicIp
+
+  # -----------------------------------------------------------------------
+  # Associate Elastic IP with instance
+  # -----------------------------------------------------------------------
+  EIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref MCPInstance
+      EIP: !Ref ElasticIP
+
+# -------------------------------------------------------------------------
+# Outputs
+# -------------------------------------------------------------------------
+Outputs:
+
+  PublicIP:
+    Description: Elastic IP address of the server
+    Value: !GetAtt ElasticIP.PublicIp
+
+  FrontendURL:
+    Description: Chat UI
+    Value: !Sub "http://${ElasticIP.PublicIp}:3000"
+
+  MCPGatewaySSE:
+    Description: MCP Gateway SSE endpoint — paste into Claude Desktop / Claude.ai
+    Value: !Sub "http://${ElasticIP.PublicIp}:8005/sse"
+
+  MCPGatewayHealth:
+    Description: Gateway health check (shows tool count when ready)
+    Value: !Sub "http://${ElasticIP.PublicIp}:8005/health"
+
+  ProductAPI:
+    Description: Product API (OpenAPI docs at /docs)
+    Value: !Sub "http://${ElasticIP.PublicIp}:8000/docs"
+
+  SSHCommand:
+    Description: SSH into the server
+    Value: !Sub "ssh -i ${KeyPairName}.pem ubuntu@${ElasticIP.PublicIp}"
+
+  SSMSessionCommand:
+    Description: Passwordless shell via SSM (no key needed)
+    Value: !Sub "aws ssm start-session --target ${MCPInstance} --region ${AWS::Region}"
+
+  DeploymentLog:
+    Description: Watch bootstrap progress after SSH
+    Value: !Sub "ssh -i ${KeyPairName}.pem ubuntu@${ElasticIP.PublicIp} tail -f /var/log/user-data.log"

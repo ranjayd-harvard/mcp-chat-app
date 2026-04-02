@@ -1,12 +1,74 @@
 import { useState, FormEvent, KeyboardEvent } from 'react';
 import { PaperAirplaneIcon } from '@heroicons/react/24/solid';
+import {
+  Squares2X2Icon,
+  ServerIcon,
+  GlobeAltIcon,
+  CircleStackIcon,
+  WrenchScrewdriverIcon,
+  TableCellsIcon,
+} from '@heroicons/react/24/outline';
+import { ToolSource } from '@/types';
 
 interface ChatInputProps {
   onSend: (message: string) => void;
   disabled?: boolean;
+  selectedSource: ToolSource;
+  onSourceChange: (source: ToolSource) => void;
 }
 
-export function ChatInput({ onSend, disabled }: ChatInputProps) {
+const SOURCE_CHIPS: {
+  value: ToolSource;
+  label: string;
+  Icon: React.ElementType;
+  activeClasses: string;
+  inactiveClasses: string;
+}[] = [
+  {
+    value: 'all',
+    label: 'All Sources',
+    Icon: Squares2X2Icon,
+    activeClasses: 'bg-gray-800 text-white border-gray-800',
+    inactiveClasses: 'bg-white text-gray-600 border-gray-300 hover:border-gray-400',
+  },
+  {
+    value: 'product',
+    label: 'Product API',
+    Icon: ServerIcon,
+    activeClasses: 'bg-primary-600 text-white border-primary-600',
+    inactiveClasses: 'bg-white text-primary-600 border-primary-300 hover:border-primary-400',
+  },
+  {
+    value: 'external',
+    label: 'External API',
+    Icon: GlobeAltIcon,
+    activeClasses: 'bg-blue-500 text-white border-blue-500',
+    inactiveClasses: 'bg-white text-blue-500 border-blue-300 hover:border-blue-400',
+  },
+  {
+    value: 'kafka',
+    label: 'Kafka',
+    Icon: CircleStackIcon,
+    activeClasses: 'bg-orange-500 text-white border-orange-500',
+    inactiveClasses: 'bg-white text-orange-500 border-orange-300 hover:border-orange-400',
+  },
+  {
+    value: 'sql',
+    label: 'SQL Server',
+    Icon: TableCellsIcon,
+    activeClasses: 'bg-teal-600 text-white border-teal-600',
+    inactiveClasses: 'bg-white text-teal-600 border-teal-300 hover:border-teal-400',
+  },
+  {
+    value: 'custom',
+    label: 'Custom Analytics',
+    Icon: WrenchScrewdriverIcon,
+    activeClasses: 'bg-secondary-600 text-white border-secondary-600',
+    inactiveClasses: 'bg-white text-secondary-600 border-secondary-300 hover:border-secondary-400',
+  },
+];
+
+export function ChatInput({ onSend, disabled, selectedSource, onSourceChange }: ChatInputProps) {
   const [input, setInput] = useState('');
 
   const handleSubmit = (e: FormEvent) => {
@@ -24,8 +86,29 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
     }
   };
 
+  const handleChipClick = (source: ToolSource) => {
+    onSourceChange(selectedSource === source && source !== 'all' ? 'all' : source);
+  };
+
   return (
     <form onSubmit={handleSubmit} className="relative">
+      {/* Source filter chips */}
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        {SOURCE_CHIPS.map(({ value, label, Icon, activeClasses, inactiveClasses }) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => handleChipClick(value)}
+            disabled={disabled}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed ${selectedSource === value ? activeClasses : inactiveClasses}`}
+          >
+            <Icon className="w-3.5 h-3.5" />
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Text input */}
       <div className="glass-effect rounded-2xl shadow-2xl p-2">
         <div className="flex items-end gap-2">
           <textarea

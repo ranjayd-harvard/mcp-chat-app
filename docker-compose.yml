@@ -1,6 +1,28 @@
 
 services:
-  # MongoDB Database
+
+  # ============================================================
+  # Infrastructure
+  # ============================================================
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: mcp-sqlserver
+    ports:
+      - "1433:1433"
+    environment:
+      SA_PASSWORD: ${MSSQL_SA_PASSWORD:-YourStrong@Password123}
+      ACCEPT_EULA: Y
+      MSSQL_PID: Developer
+    networks:
+      - mcp-network
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U SA -P "$$SA_PASSWORD" -C -Q "SELECT 1" -b
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
   mongodb:
     image: mongo:latest
     container_name: mcp-mongodb
@@ -16,7 +38,50 @@ services:
       timeout: 5s
       retries: 5
 
-  # FastAPI Backend
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: mcp-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - mcp-network
+    healthcheck:
+      test: cub zk-ready localhost:2181 5
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: mcp-kafka
+    ports:
+      - "29100:29100"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29100
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29100
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    networks:
+      - mcp-network
+    healthcheck:
+      test: kafka-broker-api-versions --bootstrap-server localhost:29100
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ============================================================
+  # Backend Services
+  # ============================================================
+
   backend:
     build:
       context: ./backend
@@ -34,7 +99,6 @@ services:
       - mcp-network
     restart: unless-stopped
 
-  # External API MCP Server
   external-api:
     build:
       context: ./backend
@@ -51,22 +115,96 @@ services:
       - mcp-network
     restart: unless-stopped
 
-  # Next.js Frontend
+  kafka-mcp:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mcp-kafka-mcp
+    ports:
+      - "8003:8003"
+    environment:
+      - KAFKA_MCP_PORT=8003
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+    command: python kafka_mcp.py
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  sqlserver-bridge:
+    build:
+      context: ./sqlserver-bridge
+      dockerfile: Dockerfile
+    container_name: mcp-sqlserver-bridge
+    ports:
+      - "8004:8004"
+    environment:
+      - SQLSERVER_BRIDGE_PORT=8004
+      - SQLSERVER_HOST=sqlserver
+      - SQLSERVER_PORT=1433
+      - SQLSERVER_USER=sa
+      - SQLSERVER_PASSWORD=${MSSQL_SA_PASSWORD:-YourStrong@Password123}
+      - SQLSERVER_DATABASE=RanjayDB
+      - SQLSERVER_TRUST_CERT=true
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  mcp-gateway:
+    build:
+      context: ./mcp-gateway
+      dockerfile: Dockerfile
+    container_name: mcp-gateway
+    ports:
+      - "8005:8005"
+    environment:
+      - MCP_GATEWAY_PORT=8005
+      - PRODUCT_API_URL=http://backend:8000
+      - EXTERNAL_API_URL=http://external-api:8002
+      - KAFKA_MCP_URL=http://kafka-mcp:8003
+      - SQL_MCP_URL=http://sqlserver-bridge:8004
+    depends_on:
+      - backend
+      - external-api
+      - kafka-mcp
+      - sqlserver-bridge
+    networks:
+      - mcp-network
+    restart: unless-stopped
+
+  # ============================================================
+  # Frontend
+  # ============================================================
+
   frontend:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        - NEXT_PUBLIC_EXTERNAL_URL=${NEXT_PUBLIC_EXTERNAL_URL:-http://localhost:8002}
+        - NEXT_PUBLIC_KAFKA_URL=${NEXT_PUBLIC_KAFKA_URL:-http://localhost:8003}
+        - NEXT_PUBLIC_SQL_URL=${NEXT_PUBLIC_SQL_URL:-http://localhost:8004}
     container_name: mcp-frontend
     ports:
       - "3000:3000"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      - NEXT_PUBLIC_EXTERNAL_URL=${NEXT_PUBLIC_EXTERNAL_URL:-http://localhost:8002}
+      - NEXT_PUBLIC_KAFKA_URL=${NEXT_PUBLIC_KAFKA_URL:-http://localhost:8003}
+      - NEXT_PUBLIC_SQL_URL=${NEXT_PUBLIC_SQL_URL:-http://localhost:8004}
     depends_on:
       - backend
     networks:
       - mcp-network
     restart: unless-stopped
+
 
 volumes:
   mongodb_data:

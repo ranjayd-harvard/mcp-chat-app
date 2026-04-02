@@ -7,15 +7,21 @@ export class MCPClient {
   private apiUrl: string;
   private customToolsUrl: string;
   private externalApiUrl: string;
+  private kafkaMcpUrl: string;
+  private sqlMcpUrl: string;
 
   constructor(
     apiUrl: string = 'http://localhost:8000',
     customToolsUrl: string = 'http://localhost:8001',
-    externalApiUrl: string = 'http://localhost:8002'
+    externalApiUrl: string = 'http://localhost:8002',
+    kafkaMcpUrl: string = 'http://localhost:8003',
+    sqlMcpUrl: string = 'http://localhost:8004'
   ) {
     this.apiUrl = apiUrl;
     this.customToolsUrl = customToolsUrl;
     this.externalApiUrl = externalApiUrl;
+    this.kafkaMcpUrl = kafkaMcpUrl;
+    this.sqlMcpUrl = sqlMcpUrl;
   }
 
   /**
@@ -40,6 +46,24 @@ export class MCPClient {
       allTools.push(...tools);
     } catch (error) {
       console.error('❌ Failed to load external API tools:', error);
+    }
+
+    // Load from Kafka MCP server (port 8003) - add "kafka_" prefix
+    try {
+      console.log('📨 Fetching Kafka tools from:', `${this.kafkaMcpUrl}/openapi.json`);
+      const tools = await this.loadToolsFromServer(this.kafkaMcpUrl, 'Kafka MCP', 'kafka');
+      allTools.push(...tools);
+    } catch (error) {
+      console.error('❌ Failed to load Kafka MCP tools:', error);
+    }
+
+    // Load from SQL Server bridge (port 8004) - add "sql_" prefix
+    try {
+      console.log('🗄️ Fetching SQL Server tools from:', `${this.sqlMcpUrl}/openapi.json`);
+      const tools = await this.loadToolsFromServer(this.sqlMcpUrl, 'SQL Server MCP', 'sql');
+      allTools.push(...tools);
+    } catch (error) {
+      console.error('❌ Failed to load SQL Server MCP tools:', error);
     }
 
     console.log(`📊 Total API tools loaded: ${allTools.length}`);
@@ -84,7 +108,7 @@ export class MCPClient {
           tools.push({
             name: operationId,
             description: (details as any).summary || (details as any).description || `${method.toUpperCase()} ${path}`,
-            inputSchema: this.convertOpenAPIToMCPSchema(details as any, path, method),
+            inputSchema: this.convertOpenAPIToMCPSchema(details as any, path, method, schema),
           });
           
           console.log(`✅ Added tool from ${serverName}: ${operationId}`);
@@ -98,7 +122,17 @@ export class MCPClient {
   /**
    * Convert OpenAPI parameter schema to MCP input schema
    */
-  private convertOpenAPIToMCPSchema(operation: any, path: string, method: string): any {
+  private resolveSchema(schema: any, fullSchema: any): any {
+    if (schema?.$ref) {
+      const parts = schema.$ref.replace('#/', '').split('/');
+      let resolved = fullSchema;
+      for (const part of parts) resolved = resolved?.[part];
+      return resolved || {};
+    }
+    return schema;
+  }
+
+  private convertOpenAPIToMCPSchema(operation: any, path: string, method: string, fullSchema?: any): any {
     const properties: Record<string, any> = {};
     const required: string[] = [];
 
@@ -125,9 +159,10 @@ export class MCPClient {
       });
     }
 
-    // Handle request body
+    // Handle request body — resolve $ref if present
     if (operation.requestBody?.content?.['application/json']?.schema) {
-      const bodySchema = operation.requestBody.content['application/json'].schema;
+      const rawSchema = operation.requestBody.content['application/json'].schema;
+      const bodySchema = fullSchema ? this.resolveSchema(rawSchema, fullSchema) : rawSchema;
       Object.assign(properties, bodySchema.properties || {});
       if (bodySchema.required) {
         required.push(...bodySchema.required);
@@ -153,8 +188,16 @@ export class MCPClient {
       // Check if tool name has external API prefix
       if (toolName.startsWith('ext_')) {
         serverUrl = this.externalApiUrl;
-        actualToolName = toolName.replace('ext_', ''); // Remove prefix
+        actualToolName = toolName.replace('ext_', '');
         console.log(`🌐 Using external API server for: ${actualToolName}`);
+      } else if (toolName.startsWith('kafka_')) {
+        serverUrl = this.kafkaMcpUrl;
+        actualToolName = toolName.replace('kafka_', '');
+        console.log(`📨 Using Kafka MCP server for: ${actualToolName}`);
+      } else if (toolName.startsWith('sql_')) {
+        serverUrl = this.sqlMcpUrl;
+        actualToolName = toolName.replace('sql_', '');
+        console.log(`🗄️ Using SQL Server bridge for: ${actualToolName}`);
       } else {
         console.log(`📦 Using main API server for: ${toolName}`);
       }

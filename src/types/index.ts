@@ -33,6 +33,8 @@ export interface MCPServer {
   status: 'connected' | 'disconnected' | 'error';
 }
 
+export type ToolSource = 'all' | 'product' | 'external' | 'kafka' | 'sql' | 'custom';
+
 export interface ChatState {
   messages: Message[];
   isLoading: boolean;

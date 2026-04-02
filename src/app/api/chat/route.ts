@@ -7,7 +7,7 @@ const anthropic = new Anthropic({
 
 export async function POST(request: Request) {
   try {
-    const { message, history, availableTools, toolResults } = await request.json();
+    const { message, history, availableTools, toolResults, selectedSource } = await request.json();
 
     console.log('📨 Received message:', message);
     console.log('📜 History length:', history?.length || 0);
@@ -20,6 +20,19 @@ export async function POST(request: Request) {
       description: tool.description,
       input_schema: tool.inputSchema,
     }));
+
+    // Focused-mode instruction appended when user has pinned a source
+    const FOCUSED_MODE_DESCRIPTIONS: Record<string, string> = {
+      product: 'Product API tools only (no-prefix tools — MongoDB product records, inventory, CRUD, conversations)',
+      external: 'External API tools only (ext_ prefix — live weather, currency rates, stock quotes)',
+      kafka:   'Kafka tools only (kafka_ prefix — real-time topics, event publishing and consuming)',
+      sql:     'SQL Server tools only (sql_ prefix — list databases/tables/views, describe schema, execute queries)',
+      custom:  'Custom Analytics tools only (calculate_inventory_value, find_low_stock_products, etc.)',
+    };
+    const focusedModeInstruction =
+      selectedSource && selectedSource !== 'all' && FOCUSED_MODE_DESCRIPTIONS[selectedSource]
+        ? `\n\nFOCUSED MODE: The user has restricted this session to ${FOCUSED_MODE_DESCRIPTIONS[selectedSource]}. Do not suggest or call tools from other sources. If the user's request cannot be answered with the available tools, explain which source they would need to switch to.`
+        : '';
 
     // Build message history for Claude
     const messages: any[] = [];
@@ -117,6 +130,17 @@ export async function POST(request: Request) {
     const response = await anthropic.messages.create({
       model: 'claude-3-haiku-20240307',
       max_tokens: 2048,
+      system: `You are a product and data assistant with access to multiple backend systems. Each tool name is prefixed to indicate its source:
+- No prefix → Product API (MongoDB): structured product records, inventory, CRUD operations, conversation history.
+- ext_ prefix → External API: live weather, currency exchange rates, stock market quotes from third-party services.
+- kafka_ prefix → Kafka (event stream): real-time message topics, event publishing and consuming, streaming data pipelines.
+- sql_ prefix → SQL Server: relational database schema exploration, table/view listings, and ad-hoc SQL queries.
+
+Tool selection rules:
+1. Match the prefix to the user's intent. If the user asks about products or inventory, use Product API tools. If they ask about events, queues, or messages, use kafka_ tools. If they ask about weather, currency, or stocks, use ext_ tools. If they ask about SQL tables, schemas, or relational data, use sql_ tools.
+2. When a request is ambiguous and could apply to more than one data source (e.g. "show me orders" could mean a Kafka topic, a MongoDB collection, OR a SQL Server table), STOP and ask a clarifying question before calling any tool. Do not guess.
+3. Never use ext_generic_api_call to reach kafka_, sql_, or Product API endpoints. Each system has its own dedicated tools.
+4. If you are unsure which tool fits, explain the options to the user and ask them to confirm.${focusedModeInstruction}`,
       tools: claudeTools,
       messages: messages,
     });
