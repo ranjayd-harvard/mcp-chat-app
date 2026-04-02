@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl -s -X OPTIONS http://localhost:8004/list_databases -H \"Origin: http://localhost:3000\" -H \"Access-Control-Request-Method: POST\" -I)",
+      "Bash(curl -s -X POST http://localhost:8004/list_databases -H \"Content-Type: application/json\" -d '{}')",
+      "Bash(docker-compose -f /Users/ranjay.kumar/Documents/Ranjay/agentic-ai/react/mcp-chat-app/docker-compose.yml logs sqlserver-bridge --tail=40)",
+      "Bash(curl -s -X POST http://localhost:8004/list_databases -H \"Content-Type: application/json\" -H \"Origin: http://localhost:3000\" -d '{}' -w \"\\\\nHTTP Status: %{http_code}\")",
+      "Bash(curl -s -X POST http://localhost:8004/describe_table -H \"Content-Type: application/json\" -d '{\"\"\"\"table_name\"\"\"\":\"\"\"\"RanjayTable1\"\"\"\",\"\"\"\"schema\"\"\"\":\"\"\"\"dbo\"\"\"\"}')",
+      "Bash(curl -s http://localhost:8005/health)"
+    ]
+  }
+}

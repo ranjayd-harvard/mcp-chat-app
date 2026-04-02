@@ -53,7 +53,7 @@ def product_helper(product) -> dict:
 
 @app.get("/products", response_model=List[ProductResponse], operation_id="list_products")
 async def list_products(category: str = None, limit: int = 100):
-    """Get all products, optionally filtered by category"""
+    """[Product API - MongoDB] List all product records stored in the database, optionally filtered by category. Use this for inventory browsing, not for Kafka events."""
     collection = get_collection()
     query = {"category": category} if category else {}
     
@@ -66,7 +66,7 @@ async def list_products(category: str = None, limit: int = 100):
 
 @app.get("/products/{product_id}", response_model=ProductResponse, operation_id="get_product_by_id")
 async def get_product_by_id(product_id: str):
-    """Get a specific product by ID"""
+    """[Product API - MongoDB] Fetch a single product record by its database ID. Use this when you have a specific product ID from the database."""
     collection = get_collection()
     
     if not ObjectId.is_valid(product_id):
@@ -81,7 +81,7 @@ async def get_product_by_id(product_id: str):
 
 @app.post("/products", response_model=ProductResponse, status_code=201, operation_id="add_product")
 async def add_product(product: Product):
-    """Create a new product"""
+    """[Product API - MongoDB] Persist a new product record to the database. Use this to add inventory items, not to publish Kafka events."""
     collection = get_collection()
     
     product_data = product.model_dump()
@@ -96,7 +96,7 @@ async def add_product(product: Product):
 
 @app.patch("/products/{product_id}", response_model=ProductResponse, operation_id="modify_product")
 async def modify_product(product_id: str, updates: ProductUpdate):
-    """Update a product"""
+    """[Product API - MongoDB] Update fields on an existing product record in the database (price, quantity, description, etc.)."""
     collection = get_collection()
     
     if not ObjectId.is_valid(product_id):
@@ -123,7 +123,7 @@ async def modify_product(product_id: str, updates: ProductUpdate):
 
 @app.delete("/products/{product_id}", status_code=204, operation_id="remove_product")
 async def remove_product(product_id: str):
-    """Delete a product"""
+    """[Product API - MongoDB] Permanently delete a product record from the database by its ID."""
     collection = get_collection()
     
     if not ObjectId.is_valid(product_id):

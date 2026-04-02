@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Message } from '@/components/Message';
 import { ChatInput } from '@/components/ChatInput';
 import { ToolsPanel } from '@/components/ToolsPanel';
 import { ConversationSidebar } from '@/components/ConversationSidebar';
 import { MCPClient } from '@/lib/mcp-client';
-import { Message as MessageType, MCPTool } from '@/types';
+import { Message as MessageType, MCPTool, ToolSource } from '@/types';
 import { WrenchScrewdriverIcon, SparklesIcon } from '@heroicons/react/24/outline';
 
 export default function ChatPage() {
@@ -14,9 +14,26 @@ export default function ChatPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [apiTools, setApiTools] = useState<MCPTool[]>([]);
   const [customTools, setCustomTools] = useState<MCPTool[]>([]);
+  const [selectedSource, setSelectedSource] = useState<ToolSource>('all');
+
+  const filteredTools = useMemo(() => {
+    if (selectedSource === 'all')      return [...apiTools, ...customTools];
+    if (selectedSource === 'product')  return apiTools.filter(t => !t.name.startsWith('ext_') && !t.name.startsWith('kafka_') && !t.name.startsWith('sql_'));
+    if (selectedSource === 'external') return apiTools.filter(t => t.name.startsWith('ext_'));
+    if (selectedSource === 'kafka')    return apiTools.filter(t => t.name.startsWith('kafka_'));
+    if (selectedSource === 'sql')      return apiTools.filter(t => t.name.startsWith('sql_'));
+    if (selectedSource === 'custom')   return customTools;
+    return [...apiTools, ...customTools];
+  }, [selectedSource, apiTools, customTools]);
   const [isToolsPanelOpen, setIsToolsPanelOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const mcpClient = useRef(new MCPClient());
+  const mcpClient = useRef(new MCPClient(
+    process.env.NEXT_PUBLIC_API_URL        || 'http://localhost:8000',
+    process.env.NEXT_PUBLIC_CUSTOM_URL     || 'http://localhost:8001',
+    process.env.NEXT_PUBLIC_EXTERNAL_URL   || 'http://localhost:8002',
+    process.env.NEXT_PUBLIC_KAFKA_URL      || 'http://localhost:8003',
+    process.env.NEXT_PUBLIC_SQL_URL        || 'http://localhost:8004',
+  ));
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [conversationList, setConversationList] = useState<any[]>([]);
 
@@ -234,7 +251,8 @@ export default function ChatPage() {
         body: JSON.stringify({
           message: content,
           history: history,
-          availableTools: [...apiTools, ...customTools],
+          availableTools: filteredTools,
+          selectedSource,
         }),
       });
 
@@ -318,7 +336,8 @@ export default function ChatPage() {
           body: JSON.stringify({
             message: content,
             history: history,
-            availableTools: [...apiTools, ...customTools],
+            availableTools: filteredTools,
+          selectedSource,
             toolResults: toolResults,
           }),
         });
@@ -428,7 +447,7 @@ return (
               className="flex items-center gap-2 px-3 py-1.5 text-sm bg-white border border-gray-300 hover:border-gray-400 rounded-lg transition-colors"
             >
               <WrenchScrewdriverIcon className="w-4 h-4 text-gray-600" />
-              <span className="text-gray-700">{apiTools.length + customTools.length} Tools</span>
+              <span className="text-gray-700">{filteredTools.length} Tools</span>
             </button>
           </div>
         </div>
@@ -504,7 +523,12 @@ return (
       {/* Input Area - Fixed at bottom */}
       <footer className="border-t border-gray-200 bg-white">
         <div className="max-w-4xl mx-auto px-4 py-4">
-          <ChatInput onSend={handleSendMessage} disabled={isLoading} />
+          <ChatInput
+              onSend={handleSendMessage}
+              disabled={isLoading}
+              selectedSource={selectedSource}
+              onSourceChange={setSelectedSource}
+            />
         </div>
       </footer>
     </div>

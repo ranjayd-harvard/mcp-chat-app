@@ -17,8 +17,17 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Set environment variable for build (will be overridden at runtime)
 ENV NEXT_TELEMETRY_DISABLED 1
+
+# Bake public backend URLs into the Next.js bundle at build time
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ARG NEXT_PUBLIC_EXTERNAL_URL=http://localhost:8002
+ARG NEXT_PUBLIC_KAFKA_URL=http://localhost:8003
+ARG NEXT_PUBLIC_SQL_URL=http://localhost:8004
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_EXTERNAL_URL=$NEXT_PUBLIC_EXTERNAL_URL
+ENV NEXT_PUBLIC_KAFKA_URL=$NEXT_PUBLIC_KAFKA_URL
+ENV NEXT_PUBLIC_SQL_URL=$NEXT_PUBLIC_SQL_URL
 
 RUN npm run build
 

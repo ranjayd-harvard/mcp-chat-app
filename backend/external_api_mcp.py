@@ -76,14 +76,12 @@ class GenericAPIRequest(BaseModel):
 @app.get("/weather/{city}", operation_id="get_weather")
 async def get_weather(city: str, units: str = "metric"):
     """
-    Get current weather for a city
-    
+    [External API - OpenWeatherMap] Fetch live current weather for a city from the OpenWeatherMap API.
+    Use this for real-time temperature, humidity, and conditions — not for product or Kafka data.
+
     Args:
         city: City name (e.g., "London", "New York")
         units: Temperature units (metric, imperial, or standard)
-    
-    Returns:
-        Weather data including temperature, conditions, humidity, etc.
     """
     if not WEATHER_API_KEY:
         raise HTTPException(status_code=500, detail="Weather API key not configured")
@@ -107,13 +105,11 @@ async def get_weather(city: str, units: str = "metric"):
 @app.post("/weather/forecast", operation_id="get_weather_forecast")
 async def get_weather_forecast(request: WeatherRequest):
     """
-    Get 5-day weather forecast for a city
-    
+    [External API - OpenWeatherMap] Fetch a 5-day weather forecast for a city from the OpenWeatherMap API.
+    Use this for future weather predictions — not for product or Kafka data.
+
     Args:
         request: Weather request with city and units
-    
-    Returns:
-        5-day forecast data
     """
     if not WEATHER_API_KEY:
         raise HTTPException(status_code=500, detail="Weather API key not configured")
@@ -141,13 +137,11 @@ async def get_weather_forecast(request: WeatherRequest):
 @app.get("/exchange-rates/{base_currency}", operation_id="get_exchange_rates")
 async def get_exchange_rates(base_currency: str = "USD"):
     """
-    Get current exchange rates for a base currency
-    
+    [External API - ExchangeRate-API] Fetch live currency exchange rates from an external forex service.
+    Use this for currency conversion data — not for product prices or Kafka events.
+
     Args:
         base_currency: Base currency code (e.g., USD, EUR, GBP)
-    
-    Returns:
-        Exchange rates for all currencies
     """
     try:
         async with httpx.AsyncClient() as client:
@@ -161,10 +155,8 @@ async def get_exchange_rates(base_currency: str = "USD"):
 @app.post("/convert-currency", operation_id="convert_currency")
 async def convert_currency(request: CurrencyConversionRequest):
     """
-    Convert amount from one currency to another
-    
-    Returns:
-        Converted amount with exchange rate
+    [External API - ExchangeRate-API] Convert a monetary amount between two currencies using live forex rates.
+    Use this for currency math — not for product pricing or Kafka data.
     """
     try:
         async with httpx.AsyncClient() as client:
@@ -197,13 +189,11 @@ async def convert_currency(request: CurrencyConversionRequest):
 @app.get("/stock/{symbol}", operation_id="get_stock_quote")
 async def get_stock_quote(symbol: str):
     """
-    Get real-time stock quote
-    
+    [External API - Alpha Vantage] Fetch a real-time stock quote from the Alpha Vantage market data API.
+    Use this for live equity prices — not for product data or Kafka events.
+
     Args:
-        symbol: Stock symbol (e.g., AAPL, GOOGL, MSFT)
-    
-    Returns:
-        Stock price, volume, and other trading data
+        symbol: Stock ticker symbol (e.g., AAPL, GOOGL, MSFT)
     """
     if not STOCK_API_KEY:
         raise HTTPException(status_code=500, detail="Stock API key not configured")
@@ -256,13 +246,12 @@ async def get_stock_historical(symbol: str, days: int = 30):
 @app.post("/api-call", operation_id="generic_api_call")
 async def generic_api_call(request: GenericAPIRequest):
     """
-    Make a generic API call to any external endpoint
-    
+    [External API - HTTP Proxy] Make an arbitrary HTTP request to any external URL.
+    ONLY use this as a last resort for external URLs not covered by other ext_ tools.
+    Do NOT use this to call the Product API, Kafka MCP, or any other internal service — those have their own dedicated tools.
+
     Args:
         request: API request details (URL, method, headers, params, body)
-    
-    Returns:
-        API response data
     """
     try:
         async with httpx.AsyncClient() as client:
