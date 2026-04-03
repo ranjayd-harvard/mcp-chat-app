@@ -27,8 +27,10 @@ export default function ChatPage() {
   }, [selectedSource, apiTools, customTools]);
   const [isToolsPanelOpen, setIsToolsPanelOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
   const mcpClient = useRef(new MCPClient(
-    process.env.NEXT_PUBLIC_API_URL        || 'http://localhost:8000',
+    API_URL,
     process.env.NEXT_PUBLIC_CUSTOM_URL     || 'http://localhost:8001',
     process.env.NEXT_PUBLIC_EXTERNAL_URL   || 'http://localhost:8002',
     process.env.NEXT_PUBLIC_KAFKA_URL      || 'http://localhost:8003',
@@ -68,10 +70,10 @@ export default function ChatPage() {
   // Create new conversation
   const createConversation = async () => {
     try {
-      const response = await fetch('http://localhost:8000/conversations', {
+      const response = await fetch(`${API_URL}/conversations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: 'default_user' }) // You can make this dynamic
+        body: JSON.stringify({ user_id: 'default_user' })
       });
       const data = await response.json();
       setCurrentConversationId(data.id);
@@ -86,7 +88,7 @@ export default function ChatPage() {
   // Save message to conversation
   const saveMessage = async (conversationId: string, message: MessageType) => {
     try {
-      await fetch(`http://localhost:8000/conversations/${conversationId}/messages`, {
+      await fetch(`${API_URL}/conversations/${conversationId}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -105,7 +107,7 @@ export default function ChatPage() {
   // Load conversation
   const loadConversation = async (conversationId: string) => {
     try {
-      const response = await fetch(`http://localhost:8000/conversations/${conversationId}`);
+      const response = await fetch(`${API_URL}/conversations/${conversationId}`);
       const data = await response.json();
       
       // Convert messages to MessageType format
@@ -128,7 +130,7 @@ export default function ChatPage() {
   // Load all conversations
   const loadConversations = async () => {
     try {
-      const response = await fetch('http://localhost:8000/conversations');
+      const response = await fetch(`${API_URL}/conversations`);
       const data = await response.json();
       // Backend already sorts by updated_at descending, so just set it
       setConversationList(Array.isArray(data) ? data : []);
@@ -153,7 +155,7 @@ export default function ChatPage() {
   // Handle deleting a conversation
   const handleDeleteConversation = async (conversationId: string) => {
     try {
-      await fetch(`http://localhost:8000/conversations/${conversationId}`, {
+      await fetch(`${API_URL}/conversations/${conversationId}`, {
         method: 'DELETE',
       });
       
