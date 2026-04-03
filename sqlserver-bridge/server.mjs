@@ -113,24 +113,36 @@ const server = http.createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
 
-    try {
-      const args = body ? JSON.parse(body) : {};
-      const result = await mcpClient.callTool({ name: toolName, arguments: args });
+    const args = body ? JSON.parse(body) : {};
 
-      // Extract text content from MCP response envelope
-      const content = result.content || [];
-      const text = content.filter(c => c.type === 'text').map(c => c.text).join('\n');
-
-      res.writeHead(200);
+    for (let attempt = 0; attempt <= 1; attempt++) {
       try {
-        res.end(JSON.stringify(JSON.parse(text)));
-      } catch {
-        res.end(JSON.stringify({ result: text }));
+        const result = await mcpClient.callTool({ name: toolName, arguments: args });
+
+        // Extract text content from MCP response envelope
+        const content = result.content || [];
+        const text = content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+
+        res.writeHead(200);
+        try {
+          res.end(JSON.stringify(JSON.parse(text)));
+        } catch {
+          res.end(JSON.stringify({ result: text }));
+        }
+        break; // success — exit retry loop
+      } catch (error) {
+        const msg = String(error);
+        const isConnErr = msg.includes('closed') || msg.includes('disconnected') || msg.includes('ECONNRESET') || msg.includes('Connection');
+        if (attempt === 0 && isConnErr) {
+          console.warn(`⚠️  Connection lost — reconnecting and retrying ${toolName}...`);
+          try { await initMCP(); } catch { /* initMCP logs its own errors */ }
+        } else {
+          console.error(`❌ Tool ${toolName} failed:`, error);
+          res.writeHead(500);
+          res.end(JSON.stringify({ error: String(error) }));
+          break;
+        }
       }
-    } catch (error) {
-      console.error(`❌ Tool ${toolName} failed:`, error);
-      res.writeHead(500);
-      res.end(JSON.stringify({ error: String(error) }));
     }
     return;
   }
