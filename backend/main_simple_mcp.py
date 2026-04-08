@@ -278,18 +278,67 @@ async def add_message(
 @app.delete("/conversations/{conversation_id}", operation_id="delete_conversation")
 async def delete_conversation(conversation_id: str):
     """Delete a conversation"""
-    db = get_database()  # ← ADD THIS LINE
-    
+    db = get_database()
+
     try:
         result = await db.conversations.delete_one({"_id": ObjectId(conversation_id)})
-        
+
         if result.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Conversation not found")
-        
+
         return {"success": True, "message": "Conversation deleted"}
-        
+
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch("/conversations/{conversation_id}/rename", operation_id="rename_conversation")
+async def rename_conversation(conversation_id: str, body: dict):
+    """Rename a conversation"""
+    db = get_database()
+    title = body.get("title", "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    try:
+        result = await db.conversations.update_one(
+            {"_id": ObjectId(conversation_id)},
+            {"$set": {"title": title, "updated_at": datetime.utcnow()}}
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.patch("/conversations/{conversation_id}/star", operation_id="star_conversation")
+async def star_conversation(conversation_id: str):
+    """Toggle star on a conversation"""
+    db = get_database()
+    try:
+        conv = await db.conversations.find_one({"_id": ObjectId(conversation_id)})
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        new_starred = not conv.get("starred", False)
+        await db.conversations.update_one(
+            {"_id": ObjectId(conversation_id)},
+            {"$set": {"starred": new_starred}}
+        )
+        return {"success": True, "starred": new_starred}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/conversations", operation_id="clear_all_conversations")
+async def clear_all_conversations(user_id: Optional[str] = None):
+    """Delete all conversations"""
+    db = get_database()
+    query = {}
+    if user_id:
+        query["user_id"] = user_id
+    result = await db.conversations.delete_many(query)
+    return {"success": True, "deleted": result.deleted_count}
+
 
 if __name__ == "__main__":
     import uvicorn
