@@ -155,23 +155,45 @@ export default function ChatPage() {
   // Handle deleting a conversation
   const handleDeleteConversation = async (conversationId: string) => {
     try {
-      await fetch(`${API_URL}/conversations/${conversationId}`, {
-        method: 'DELETE',
-      });
-      
-      // Reload conversation list
+      await fetch(`${API_URL}/conversations/${conversationId}`, { method: 'DELETE' });
       await loadConversations();
-      
-      // If we deleted the current conversation, start a new one
-      if (conversationId === currentConversationId) {
-        handleNewConversation();
-      }
-      
-      console.log('✅ Deleted conversation:', conversationId);
+      if (conversationId === currentConversationId) handleNewConversation();
     } catch (error) {
       console.error('❌ Error deleting conversation:', error);
     }
-};
+  };
+
+  const handleRenameConversation = async (conversationId: string, title: string) => {
+    try {
+      await fetch(`${API_URL}/conversations/${conversationId}/rename`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      await loadConversations();
+    } catch (error) {
+      console.error('❌ Error renaming conversation:', error);
+    }
+  };
+
+  const handleStarConversation = async (conversationId: string) => {
+    try {
+      await fetch(`${API_URL}/conversations/${conversationId}/star`, { method: 'PATCH' });
+      await loadConversations();
+    } catch (error) {
+      console.error('❌ Error starring conversation:', error);
+    }
+  };
+
+  const handleClearAll = async () => {
+    try {
+      await fetch(`${API_URL}/conversations`, { method: 'DELETE' });
+      setConversationList([]);
+      handleNewConversation();
+    } catch (error) {
+      console.error('❌ Error clearing conversations:', error);
+    }
+  };
 
   const handleSendMessage = async (content: string) => {
     // Create conversation if it doesn't exist
@@ -427,6 +449,9 @@ return (
         onSelectConversation={handleSelectConversation}
         onNewConversation={handleNewConversation}
         onDeleteConversation={handleDeleteConversation}
+        onRenameConversation={handleRenameConversation}
+        onStarConversation={handleStarConversation}
+        onClearAll={handleClearAll}
       />
     </div>
 
